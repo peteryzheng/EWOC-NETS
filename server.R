@@ -1,6 +1,10 @@
+library(DT)
 library(shiny)
 library(ggplot2)
 library(shinyjs)
+library(dplyr)
+library(digest)
+
 onSessionEnded = function(callback) {
   "Registers the given callback to be invoked when the session is closed
   (i.e. the connection to the client has been severed). The return value
@@ -10,6 +14,14 @@ onSessionEnded = function(callback) {
 }
 `%then%` <- shiny:::`%OR%`
 
+assign("globaltox", NULL, envir = .GlobalEnv)
+globaltox <- data.frame(matrix(ncol = 11,nrow = 0))
+tempColNames <- rep('',6)
+for (i in 1:6){
+  tempColNames[i] <- paste0("Adjusted Grade",i)
+}
+colnames(globaltox) <- c('Patient ID','Dose Level',tempColNames,'Maximum Adjusted Grade','ETS','NETS')
+
 shinyServer(
   function(input,output){
     #session$onSessionEnded(function() {
@@ -18,48 +30,103 @@ shinyServer(
     #################### Dynamic Input pages #################### 
     useShinyjs()
     rv <- reactiveValues(page = 1)
-    observe({
-      toggleState(id = "prevBtn", condition = rv$page > 1)
-      toggleState(id = "nextBtn", condition = rv$page < 2)
-      hide(selector = ".page")
-      show(sprintf("step%s", rv$page))
-    })
-    observe({
-      shinyjs::toggleState("nextBtn",
-                           condition = # Make sure every toxicity have a value
-                             !is.null(input$l1tox) &&
-                             !is.null(input$l2tox) &&
-                             !is.null(input$l3ntox) &&
-                             !is.null(input$l4ntox) &&
-                             !is.null(input$l3tox) &&
-                             !is.null(input$l4tox) &&
-                             # Make sure every toxicity have a numeric value
-                             !is.na(as.numeric(input$l1tox)) &&
-                             !is.na(as.numeric(input$l2tox)) &&
-                             !is.na(as.numeric(input$l3ntox)) &&
-                             !is.na(as.numeric(input$l4ntox)) &&
-                             !is.na(as.numeric(input$l3tox)) &&
-                             !is.na(as.numeric(input$l4tox))
-                           )
-    })
-    observe({
-      shinyjs::toggleState("calculate"
-                           #condition = checkProb()
-                           )
-    })
+    
     navPage <- function(direction) {
       rv$page <- rv$page + direction
     }
     observeEvent(input$prevBtn, navPage(-1))
     observeEvent(input$nextBtn, navPage(1))
     
+    toxnrow <- reactiveValues(dtrow = nrow(get('globaltox',envir = .GlobalEnv)))
+    
+    updatedt <- function(){
+      print( nrow(get('globaltox',envir = .GlobalEnv)))
+      if(is.null(nrow(get('globaltox',envir = .GlobalEnv)))){
+        toxnrow$dtrow = 0
+      }
+      else{
+        toxnrow$dtrow = nrow(get('globaltox',envir = .GlobalEnv))
+      }
+    }
+    
+    observeEvent(input$formsubmission,updatedt())
+    
+    # Mandatory toxicity fileds
+    mandatoryfieldstox <- c('doselevel','l1tox','l2tox','l3ntox','l4ntox','l3tox','l4tox')
+    # Mandatory parameter fields
+    mandatoryfieldsparameter <- c('alphavalue','betavalue','pDLTvalue')
+    
+    observe({
+      # js for page buttons
+      toggleState(id = "prevBtn", condition = rv$page > 1)
+      toggleState(id = "nextBtn", condition = rv$page < 2)
+      hide(selector = ".page")
+      show(sprintf("step%s", rv$page))
+      # js script for mandatory tox fields
+      mandatorytox <- vapply(
+        mandatoryfieldstox,
+        function(x){
+          !is.null(input[[x]]) && !is.na(as.numeric(input[[x]]))
+        },
+        logical(1)
+      )
+      filledtox <- all(mandatorytox)
+      shinyjs::toggleState("formsubmission",
+                           condition = # Make sure every toxicity have a value
+                             filledtox
+                           )
+      # js script for mandatory parameter fields   
+      mandatoryparameters <- vapply(
+        mandatoryfieldsparameter,
+        function(x){
+          # Make sure every value is not NULL or non-numeric
+          !is.null(input[[x]]) && !is.na(as.numeric(input[[x]]))
+        },
+        logical(1)
+      )
+      # Boolean value indicating if mandatory fields are filled
+      filledpara <- all(mandatoryparameters)
+      shinyjs::toggleState('nextBtn',
+                           condition = # Make sure all parameters are valid before allowing input on second page
+                             filledpara &&
+                             as.numeric(input$pDLTvalue) <= 100
+      )
+      # js for calculate button
+      shinyjs::toggleState('calculating',
+                           condition = 
+                             (toxnrow$dtrow > 0) || 
+                             !is.null(toxnrow$dtrow))
+    })
+
+    # Input parameters (alpha beta), calculate TNETS, import button
     output$page1 <- renderUI({
       tagList(
         h2("Step 1"),
-        h3("Please list all instances for each toxicity level."),
+        h3("Please input all relevant parameters"),
+        br(),
+        tags$div(
+          class = 'widgets',
+          textInput('alphavalue','Please enter value for alpha: ','-2'),
+          textInput('betavalue','Please enter value for beta: ','0.25'),
+          textInput('pDLTvalue','Please enter value for expected percentage of DLT : (maximum of 100) ','33'),
+          h3(textOutput('TNETSvalue')),
+          br(),
+          actionButton('dataimport','Import',
+                       style="background-color: #004990;color: white"),
+          textOutput('errorMessagePara')
+        )
+      )
+    })
+    
+    output$page2 <- renderUI({
+      tagList(
+        h2("Step 2"),
+        h3("Please list all instances for each toxicity level"),
         br(),
         # Input for all toxicity incidences
         tags$div(class = "widgets",
+                 textInput('ptID','Please enter Patient ID(optional):',''),
+                 textInput('doselevel','Please enter dose level:','0'),
                  textInput("l1tox",
                            "Please enter the total number of instances for grade 1 toxicity:",
                            "0",placeholder = "Enter an integer"),
@@ -67,34 +134,37 @@ shinyServer(
                            "Please enter the total number of instances for grade 2 toxicity:",
                            "0",placeholder = "Enter an integer"),
                  textInput("l3ntox",
-                           "Please enter the total number of instances for grade 3 non-DLT:",
+                           "Please enter the total number of instances for grade 3 non-DLT : ",
                            "0",placeholder = "Enter an integer"),
                  textInput("l4ntox",
-                           "Please enter the total number of instances for grade 4 non-DLT:",
+                           "Please enter the total number of instances for grade 4 non-DLT : ",
                            "0",placeholder = "Enter an integer"),
                  textInput("l3tox",
-                           "Please enter the total number of instances for grade 3 DLT:",
+                           "Please enter the total number of instances for grade 3 DLT : ",
                            "0",placeholder = "Enter an integer"),
                  textInput("l4tox",
-                           "Please enter the total number of instances for grade 4 DLT:",
-                           "0",placeholder = "Enter an integer")
-                 
-        ),
-                 
-
-        textOutput("errorMessage")
+                           "Please enter the total number of instances for grade 4 DLT : ",
+                           "0",placeholder = "Enter an integer"),
+                 textOutput("toxerr"),
+                 br(),
+                 fluidRow(
+                  column(4,actionButton('formsubmission','Submit',
+                                        style="background-color: #004990;color: white")),
+                  column(6,actionButton('calculating',"Calculate", style="color: #004990"))
+                 )
+        )
       )
     })
-    output$page2 <- renderUI({
-      tagList(
-        #h2("Step 2"),
-        #h3("Please Enter the True Probability of Dose Limiting Toxicity (Pdlt) and dosages (optional) for each Dose Level Below:"),
-        #br(),
-        #uiOutput("dynamicInputs"),
-        #h4("Please note: All Doses have to be entered for calculation"),
-        actionButton("calculate","Calculate", style="color: #004990")
+    
+    doselevelreactive <- reactive({
+      # Debug dose level
+      validate(
+        need(try(!is.null(input$doselevel)),'Dose level is invalid') %then%
+          need(try(!is.na(as.numeric(input$doselevel))),'Dose level is not a number')
       )
+      return(as.numeric(input$doselevel))
     })
+    
     
     datatox <- reactive({
       # Validate that all toxicity have been filled out before proceeding
@@ -110,7 +180,9 @@ shinyServer(
         need(try(!is.na(as.numeric(input$l3ntox))),"Grade 3 non-DLT NOT a Number") %then%
         need(try(!is.na(as.numeric(input$l4ntox))),"Grade 4 non-DLT NOT a Number") %then%
         need(try(!is.na(as.numeric(input$l3tox))),"Grade 3 DLT NOT a Number") %then%
-        need(try(!is.na(as.numeric(input$l4tox))),"Grade 4 DLT NOT a Number") 
+        need(try(!is.na(as.numeric(input$l4tox))),"Grade 4 DLT NOT a Number") %then%
+        need(try(!is.null(input$doselevel)),'Dose level is invalid') %then%
+        need(try(!is.na(as.numeric(input$doselevel))),'Dose level is not a number')
       )
       #reactive function to return toxicity data
       toxdf <- data.frame(input$l1tox, input$l2tox, input$l3ntox, input$l4ntox, input$l3tox, input$l4tox)
@@ -127,24 +199,32 @@ shinyServer(
       return(t(toxdf))
     })
     
-    output$datatox <- renderTable({
-      if (is.null(input$calculate) ){
-        return()
+    datatoxmand <- reactive({
+      # Validate that all toxicity have been filled for error message
+      validate(
+        need(try(!is.null(input$l1tox)),"Grade 1 toxicity invalid") %then%
+          need(try(!is.null(input$l2tox)),"Grade 2 toxicity invalid") %then%
+          need(try(!is.null(input$l3ntox)),"Grade 3 non-DLT invalid") %then%
+          need(try(!is.null(input$l4ntox)),"Grade 4 non-DLT invalid") %then%
+          need(try(!is.null(input$l3tox)),"Grade 3 DLT invalid") %then%
+          need(try(!is.null(input$l4tox)),"Grade 4 DLT invalid") %then%
+          need(try(!is.na(as.numeric(input$l1tox))),"Grade 1 toxicity NOT a Number") %then%
+          need(try(!is.na(as.numeric(input$l2tox))),"Grade 2 toxicity NOT a Number") %then%
+          need(try(!is.na(as.numeric(input$l3ntox))),"Grade 3 non-DLT NOT a Number") %then%
+          need(try(!is.na(as.numeric(input$l4ntox))),"Grade 4 non-DLT NOT a Number") %then%
+          need(try(!is.na(as.numeric(input$l3tox))),"Grade 3 DLT NOT a Number") %then%
+          need(try(!is.na(as.numeric(input$l4tox))),"Grade 4 DLT NOT a Number") %then%
+          need(try(!is.null(input$doselevel)),'Dose level is invalid') %then%
+          need(try(!is.na(as.numeric(input$doselevel))),'Dose level is not a number')
+      )
+      return(TRUE)
+    })
+    
+    # Toxicity error messages
+    output$toxerr <- renderText(
+      if(!datatoxmand()){
+        head(datatoxmand())
       }
-      else{
-        input$calculate
-        if(input$calculate == 0)
-          return()
-        else
-          isolate(
-            if(is.null(datatox())){return()}
-            else{
-              return(datatox())
-            }
-          )
-      }
-    },
-    include.rownames=TRUE,align = 'c'
     )
     
     maxtox <- reactive({
@@ -161,13 +241,81 @@ shinyServer(
       return(maxgrade)
     })
     
+    # Reactive value for alpha
+    alphavaluereactive <- reactive({
+      # Debug clauses
+      validate(
+        need(try(!is.null(input$alphavalue)),'Alpha value is invalid') %then%
+        need(try(!is.na(as.numeric(input$alphavalue))),'Alpha value is not a number')
+      )
+      return(as.numeric(input$alphavalue))
+    })
+    
+    # Reactive value for beta
+    betavaluereactive <- reactive({
+      # Debug clauses
+      validate(
+        need(try(!is.null(input$betavalue)),'Alpha value is invalid') %then%
+        need(try(!is.na(as.numeric(input$betavalue))),'Alpha value is not a number')
+      )
+      return(as.numeric(input$betavalue))
+    })
+    
+    ptIDreactive <- reactive({
+      validate(
+        need(try(!is.null(input$ptID)),'Patient ID is invalid') 
+      )
+      return(input$ptID)
+    })
+    
+    # reactive function for error message
+    parareactive <- reactive({
+      # Validate all conditions on page 1 for error messages
+      validate(
+        need(try(!is.null(input$alphavalue)),'Alpha value is invalid') %then%
+        need(try(!is.na(as.numeric(input$alphavalue))),'Alpha value is not a number') %then%
+        need(try(!is.null(input$betavalue)),'Alpha value is invalid') %then%
+        need(try(!is.na(as.numeric(input$betavalue))),'Alpha value is not a number') %then%
+        need(try(!is.null(input$pDLTvalue)),'Expected percentage of DLT is invalid') %then%
+        need(try(!is.na(as.numeric(input$pDLTvalue))),'Expected percentage of DLT is not a number') %then%
+        need(try(as.numeric(input$pDLTvalue) <= 100),'Expected percentage of DLT is bigger than 100%') 
+      )
+      return(TRUE)
+    })
+    
+    # Output error messages from previous methods
+    output$errorMessagePara <- renderText({
+      if(!parareactive()){
+        head(parareactive())
+      }
+    })
+    
+    # Calculate TNETS
+    TNETSreactive <- reactive({
+      validate(
+        need(try(!is.null(input$pDLTvalue)),'Expected percentage of DLT is invalid') %then%
+        need(try(!is.na(as.numeric(input$pDLTvalue))),'Expected percentage of DLT is not a number') %then%
+        need(try(as.numeric(input$pDLTvalue) <= 100),'Expected percentage of DLT is bigger than 100%')
+      )
+      toxpercentage <- as.numeric(input$pDLTvalue)
+      # Assuming non-tox is 7% and the nontox dose grade is 1:1:1:1
+      nontoxpercentage <- (100-7-toxpercentage)/4
+      # nontoxpercentage times average NETS of each toxicity grade
+      TNETScalc <- 0.07 * 0 +
+                    nontoxpercentage * (0.092 + 0.250 + 0.417 + 0.583)+
+                    toxpercentage/2 * (0.75 + 0.917)
+      return(TNETScalc/100)
+    })
+    
+    output$TNETSvalue <- renderText({
+      paste0('\n TNETS : ',TNETSreactive())
+      
+    })
+    
     etscore <- reactive({
       # Find ETS of patient
       toxdf <- datatox()
       tottoxnum <- sum(as.numeric(toxdf[,1]))
-      print(toxdf)
-      print(class(toxdf))
-      
       if(tottoxnum == 0){
         return(0)
       }
@@ -181,8 +329,8 @@ shinyServer(
       }
       else{
         # Parameter values for each patient
-        alphavalue <- -2
-        betavalue <- 0.25
+        alphavalue <- alphavaluereactive()
+        betavalue <- betavaluereactive()
         # wi value for each toxicity
         wivalue <- rep(1,tottoxnum)
         # expanding the toxdf
@@ -200,31 +348,68 @@ shinyServer(
         return(maxtox()-1 + natexp/(1+natexp))
       }
     })
+
+    # Reactive methods for new table
+    toxrow <- reactive({
+      # get toxicity data for each patient
+      tmptox <- t(datatox())
+      # create patient rowname
+      rownames(tmptox) <- c('Patient')
+      toxscoretable <- data.frame(matrix(ncol = 3,nrow = 1))
+      # NETS data frame
+      colnames(toxscoretable) <- c('Maximum Adjusted Grade','ETS','NETS')
+      rownames(toxscoretable) <- c('Patient')
+      toxscoretable[1,1] <- maxtox()
+      toxscoretable[1,2] <- etscore()
+      toxscoretable[1,3] <- etscore()/6
+      # create row for each patient
+      tmptoxrow <- cbind(ptIDreactive(),doselevelreactive(),tmptox,toxscoretable)
+      return(tmptoxrow)
+    })
     
-    output$toxicityscores <- renderTable({
-      if (is.null(input$calculate) ){
+    # Output for toxicity score for each submisison    
+    output$toxicityscores <- DT::renderDataTable({
+      if (is.null(input$formsubmission) ){
         return()
       }
       else{
-        input$calculate
-        if(input$calculate == 0)
+        input$formsubmission
+        if(input$formsubmission == 0)
           return()
         else
           isolate(
             if(is.null(datatox())){return()}
             else{
-              toxscoretable <- data.frame(matrix(ncol = 1,nrow = 3))
-              rownames(toxscoretable) <- c('Maximum Adjusted Grade','ETS','NETS')
-              colnames(toxscoretable) <- c('Scores')
-              toxscoretable[1,1] <- maxtox()
-              toxscoretable[2,1] <- etscore()
-              toxscoretable[3,1] <- etscore()/6
-              return(toxscoretable)
+              tmptoxrow <- toxrow()
+              colnames(tmptoxrow) <- colnames(globaltox)
+              if(is.null(nrow(get('globaltox',envir = .GlobalEnv)))){
+                rownames(tmptoxrow) <- paste0('Patient ',1)
+              }
+              else{
+                rownames(tmptoxrow) <- paste0('Patient ',(nrow(get('globaltox',envir = .GlobalEnv))+1))
+              }
+              # assign global variable hence <<-
+              assign('globaltox',rbind(get('globaltox',globalenv()),tmptoxrow),globalenv())
+              #globaltox <<- rbind(globaltox,tmptoxrow)
+              return(get('globaltox',envir = .GlobalEnv))
             }
           )
       }
     },
-    include.rownames = TRUE, align = 'c')
+    options = list(searching = TRUE, lengthChange = TRUE,orderClasses = TRUE,scrollX = TRUE,className = 'dt-center')
+    )
+    
+    # Downloading files of all patients
+    output$downFile <- downloadHandler(
+      filename = function(){
+        paste("Patient toxicities information","csv",sep = ".")
+      },
+      content = function(file){
+        temp <- output$toxicityscores
+        write.csv(temp,file,row.names = FALSE)
+        write.table(otherstats(), file, append = TRUE,sep = ',')
+      }
+    )
   }
 )
 

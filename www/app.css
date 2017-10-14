@@ -1,7 +1,6 @@
 .container{
   width:100%;
   background-color:white;
-  box-align:center;
   height:100%;
   max-height:100%;
   overflow:auto;
@@ -25,7 +24,6 @@
 
 /*#################### TITLE ####################*/
 .title{
-  box-align:center;
   width:100%;
   max-width:100%;
 }
@@ -39,7 +37,7 @@
 
 .title > div{
   max-width:75%;
-  margin-top:0px;
+  margin-top:0;
 }
 
 .header > h1{
@@ -69,13 +67,14 @@
 
 .widgets{
   color:#004990;
-  margin-top:0px;
+  margin-top:0;
 }
 
 .buttons{
   display:inline-block;
   color:#004990;
 }
+
 h2{
   color: #004990;
   font-size:2em;
@@ -107,113 +106,54 @@ h1{
   color:#004990;
 }
 
-.UserManual{
-  width: 100%;
+.container > .panel{
   max-width:100%;
 }
 
-.table{
-  display:inline-block;
-  width:100%;
-}
-
-.UserManual > h1{
-  color:#004990;
-  font-size: 2em;
-  margin-top: 10px;
-  text-align:center;
-  font-weight:bold;
-}
-
-.UserManual > h2{
-  color:#004990;
-  font-size: 1.75em;
-  margin-top: 10px;
-  text-align:center;
-  font-weight:bold;
-}
-
-.UserManual > h3{
-  color:#004990;
-  font-size: 1.5em;
-  margin-top: 10px;
-  text-align:center;
-  font-weight:bold;
-}
-
-.UserManual > div{
-  margin-bottom:5%;
-
-}
-
-.piccontainer{
-  display:inline-block;
-  width:100%;
-  max-width:100%;
-  vertical-align:top;
-}
-.piccontainer > figure{
-  width:100%;
-  margin-left:0px;
-  margin-right:3%;
-}
-figure > img{
+.side{
   max-width:100%;
 }
 
-figure > h1{
-  width: 100%;
-}
-.piccontainer > h1{
-  font-size:1em;
+.main{
   max-width:100%;
-  width:100%;
-  color:#004990;
-  margin-top: 2%;
-  margin-left: 0px;
-  margin-right: 0px;
-  line-height:100%;
 }
 
-.piccontainer2{
-  display:inline-block;
-  width:100%;
+.toxtable{
   max-width:100%;
-  vertical-align:top;
-}
-.piccontainer2 > figure{
-  width:45%;
-  margin-left:0px;
-  margin-right:3%;
 }
 
-.piccontainer2 > h1{
-  font-size:1em;
-  max-width:50%;
-  width:50%;
-  color:#004990;
-  margin-top: 2%;
-  margin-left: 0px;
-  margin-right: 0px;
-  line-height:100%;
+.toxicityscores{
+  background-color:red;
+}
+.toxtable{
+  font-size:75%;
+  margin-top:20px;
 }
 
-.tab1{
-  margin-left: 25px;
-  line-height:90%;
-  margin-top: 0px;
-  margin-bottom: 0px;
-}
 
-.tab2{
-  margin-left: 50px;
-  line-height:90%;
-  margin-top: 0px;
-  margin-bottom: 0px;
-}
 
-.legend{
-  width:100%;
-  font-size:0.7em;
-  font-weight:bold;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
