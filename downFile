@@ -1,0 +1,12 @@
+"Dose Level","1","2","3","4","5","6"
+"True Probability of Dose Limiting Toxicity",0.05,0.1,0.15,0.25,0.35,0.5
+"Dosage",NA,NA,NA,NA,NA,NA
+"Probability of the Dose Level Chosen as MTD",0.091,0.164,0.287,0.26,0.141,0.029
+"Expected Number of Patients Treated at the Dose Level",3.406,3.63,3.507,3.062,1.865,0.704
+"Expected Number of Dose Limiting Toxicity at the Dose Level",0.17,0.363,0.526,0.765,0.653,0.352
+"Other Characteristics"
+"Expected Probability of Dose-limiting Toxicity at MTD",0.189
+"Overall Rate of Dose Limiting Toxicity",0.175
+"Probability of All Dose Levels Being Over Toxic",0.027
+"Expected Overall Number of Patients",16.174
+"Expected Overall Number of Dose Limiting Toxicity",2.83

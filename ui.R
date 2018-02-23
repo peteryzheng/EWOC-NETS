@@ -1,5 +1,10 @@
 ##### inputs and outputs #####
 
+tmp <- 0
+for(i in 1:10){
+  tmp = tmp+i
+}
+print(tmp)
 #workingdirectory = "D:/docs/Spring 2017/499R/Shiny app"
 #setwd(workingdirectory)
 #outputdirectory = "D:/docs/Spring 2017/499R/Shiny app"
@@ -37,7 +42,7 @@ shinyUI(fillPage( #fluidpage based on different browser
                      actionButton("prevBtn", "< Previous",style="color: #004990"),
                      actionButton("nextBtn", "Next >",style="color: #004990"),
                      hidden(
-                       lapply(seq(2), function(i) {
+                       lapply(seq(3), function(i) {
                          div(
                            class = "page",
                            id = paste0("step", i),
@@ -47,6 +52,9 @@ shinyUI(fillPage( #fluidpage based on different browser
                            }
                            else if (i == 2){
                              uiOutput("page2")
+                           }
+                           else if (i == 3){
+                             uiOutput("page3")
                            }
                            #else if (i == 3){
                            #   uiOutput("page3")
@@ -69,15 +77,18 @@ shinyUI(fillPage( #fluidpage based on different browser
                   br(),
                   tags$div(
                     class = 'toxtable',
-                    DT::dataTableOutput(outputId = "toxicityscores", width = "100%")
+                    dataTableOutput(outputId = "toxicityscores")
                   )
                 ),
                 tabPanel(
-                  title = h1("Table Output",class = "main")
-                  #tableOutput()
+                  title = h1("Table Output",class = "main"),
+                  dataTableOutput(outputId = "tableoutputs")
                 ),
                 tabPanel(
-                  title = h1("Plot Output", class = "main")
+                  title = h1("Plot Output", class = "main"),
+                  plotOutput(outputId = "rhooutputs"),
+                  plotOutput(outputId = "gammaoutputs")
+                  
                 )
               )
             )

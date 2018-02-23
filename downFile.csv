@@ -1,0 +1,7 @@
+,Patient ID,Dose Level,Adjusted Grade1,Adjusted Grade2,Adjusted Grade3,Adjusted Grade4,Adjusted Grade5,Adjusted Grade6,Maximum Adjusted Grade,ETS,NETS
+Patient 1,,30,2,3,4,1,0,0,4,3.320821301,0.553470217
+Patient 2,,30,3,2,1,0,0,0,3,2.195184677,0.365864113
+Patient 3,,30,2,3,1,1,0,0,4,3.212068804,0.535344801
+Patient 4,,40,2,2,2,3,1,0,5,4.310025519,0.718337586
+Patient 5,,40,2,2,2,3,0,1,6,5.268941421,0.878156904
+Patient 6,,40,3,1,1,2,2,1,6,5.285637571,0.880939595

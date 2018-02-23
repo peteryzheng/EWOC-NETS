@@ -14,13 +14,19 @@ onSessionEnded = function(callback) {
 }
 `%then%` <- shiny:::`%OR%`
 
-assign("globaltox", NULL, envir = .GlobalEnv)
-globaltox <- data.frame(matrix(ncol = 11,nrow = 0))
+# Initializing global variable
+assign("globaltox", data.frame(matrix(ncol = 11,nrow = 0)), envir = .GlobalEnv)
 tempColNames <- rep('',6)
 for (i in 1:6){
   tempColNames[i] <- paste0("Adjusted Grade",i)
 }
-colnames(globaltox) <- c('Patient ID','Dose Level',tempColNames,'Maximum Adjusted Grade','ETS','NETS')
+# Assigning column names
+colnames(.GlobalEnv$globaltox) <- c('Patient ID','Dose Level',tempColNames,'Maximum Adjusted Grade','ETS','NETS')
+
+# Global variables to keep track of each button
+assign("importbuttontracker", 0, envir = .GlobalEnv)
+assign("nextBtntracker", 0, envir = .GlobalEnv)
+assign("deleteRowtracker", 0, envir = .GlobalEnv)
 
 shinyServer(
   function(input,output){
@@ -29,19 +35,22 @@ shinyServer(
     #})
     #################### Dynamic Input pages #################### 
     useShinyjs()
+    # Reactive value for pages
     rv <- reactiveValues(page = 1)
     
+    # shiny js for switching pages
     navPage <- function(direction) {
       rv$page <- rv$page + direction
     }
     observeEvent(input$prevBtn, navPage(-1))
     observeEvent(input$nextBtn, navPage(1))
-    
+    # Reactive value for number of rows of globaltox
     toxnrow <- reactiveValues(dtrow = nrow(get('globaltox',envir = .GlobalEnv)))
     
+    # Reactive function to update toxnrow value
     updatedt <- function(){
-      print( nrow(get('globaltox',envir = .GlobalEnv)))
       if(is.null(nrow(get('globaltox',envir = .GlobalEnv)))){
+        # assign 0 if globaltox is null (will mess up the values)
         toxnrow$dtrow = 0
       }
       else{
@@ -49,7 +58,57 @@ shinyServer(
       }
     }
     
+    # Only update every time formsubmission / delete is clicked 
     observeEvent(input$formsubmission,updatedt())
+    
+    # Update globaltox when import button is clicked for input files
+    observeEvent(input$importbutton,updateimport())
+    
+    updateimport <- function(){
+      incomingFile <- input$csvimport
+      if(is.null(input$csvimport)){
+        return(NULL)
+      }
+      else{
+        incomingdt <- read.csv(incomingFile$datapath,header = TRUE,row.names = 1,check.names=FALSE)
+        tmpglobaltox <- get('globaltox',envir = .GlobalEnv)
+        #print(tmpglobaltox)
+        if(ncol(incomingdt) == ncol(tmpglobaltox) &&
+           all(colnames(incomingdt)== colnames(tmpglobaltox))){
+          assign('globaltox',incomingdt,globalenv())
+          #print(get('globaltox',envir = .GlobalEnv))
+        }
+      }
+    }
+    
+    # For deleting rows
+    rowvalues <- reactiveValues(globaltoxworking = get('globaltox',envir = .GlobalEnv))
+    
+    observeEvent(input$deleteRow,deletingrow(input$toxicityscores_rows_selected))
+    
+    deletingrow <- function(rowselected){
+      print(input$deleteRow[[1]])
+      if (!is.null(rowselected)) {
+        #print(input$toxicityscores_rows_selected)
+        tmpdt <- get('globaltox',envir = .GlobalEnv)
+        tmpdt <- tmpdt[-as.numeric(rowselected),]
+        assign('globaltox',tmpdt,globalenv())
+        print(paste0('Delete function used: ',nrow(get('globaltox',envir = .GlobalEnv))))
+      }
+    }
+    
+    # Keeping track of all button clicking 
+    observeEvent(input$importbutton, incrementButtonCounter('importbutton'))
+    observeEvent(input$nextBtn, incrementButtonCounter('nextBtn'))
+    observeEvent(input$deleteRow, incrementButtonCounter('deleteRow'))
+    
+    incrementButtonCounter <- function(buttonname){
+      buttontrackername <- paste0(buttonname,'tracker') 
+      tmp <- get(buttontrackername,envir = .GlobalEnv)
+      assign(buttontrackername, 1, envir = .GlobalEnv)
+      print(paste0(buttontrackername,' assigned 1'))
+      
+    }
     
     # Mandatory toxicity fileds
     mandatoryfieldstox <- c('doselevel','l1tox','l2tox','l3ntox','l4ntox','l3tox','l4tox')
@@ -59,7 +118,6 @@ shinyServer(
     observe({
       # js for page buttons
       toggleState(id = "prevBtn", condition = rv$page > 1)
-      toggleState(id = "nextBtn", condition = rv$page < 2)
       hide(selector = ".page")
       show(sprintf("step%s", rv$page))
       # js script for mandatory tox fields
@@ -89,7 +147,8 @@ shinyServer(
       shinyjs::toggleState('nextBtn',
                            condition = # Make sure all parameters are valid before allowing input on second page
                              filledpara &&
-                             as.numeric(input$pDLTvalue) <= 100
+                             as.numeric(input$pDLTvalue) <= 100 &&
+                             rv$page < 2
       )
       # js for calculate button
       shinyjs::toggleState('calculating',
@@ -111,9 +170,19 @@ shinyServer(
           textInput('pDLTvalue','Please enter value for expected percentage of DLT : (maximum of 100) ','33'),
           h3(textOutput('TNETSvalue')),
           br(),
-          actionButton('dataimport','Import',
-                       style="background-color: #004990;color: white"),
-          textOutput('errorMessagePara')
+          tags$div(
+            class = 'fileImport',
+            fileInput('csvimport','Import .csv File',
+                      accept = c(
+                        "text/csv",
+                        "text/comma-separated-values,text/plain",
+                        ".csv")
+                      )
+          ),
+          actionButton('importbutton','Import',style="background-color: #004990;color: white"),
+          textOutput('errorMessagePara'),
+          actionButton('deleteRow','Delete',style="background-color: #004990;color: white")
+          
         )
       )
     })
@@ -159,7 +228,7 @@ shinyServer(
     doselevelreactive <- reactive({
       # Debug dose level
       validate(
-        need(try(!is.null(input$doselevel)),'Dose level is invalid') %then%
+        need(try(!is.null(input$doselevel)),'Dose level is invalid') ,
           need(try(!is.na(as.numeric(input$doselevel))),'Dose level is not a number')
       )
       return(as.numeric(input$doselevel))
@@ -169,19 +238,19 @@ shinyServer(
     datatox <- reactive({
       # Validate that all toxicity have been filled out before proceeding
       validate(
-        need(try(!is.null(input$l1tox)),"Grade 1 toxicity invalid") %then%
-        need(try(!is.null(input$l2tox)),"Grade 2 toxicity invalid") %then%
-        need(try(!is.null(input$l3ntox)),"Grade 3 non-DLT invalid") %then%
-        need(try(!is.null(input$l4ntox)),"Grade 4 non-DLT invalid") %then%
-        need(try(!is.null(input$l3tox)),"Grade 3 DLT invalid") %then%
-        need(try(!is.null(input$l4tox)),"Grade 4 DLT invalid") %then%
-        need(try(!is.na(as.numeric(input$l1tox))),"Grade 1 toxicity NOT a Number") %then%
-        need(try(!is.na(as.numeric(input$l2tox))),"Grade 2 toxicity NOT a Number") %then%
-        need(try(!is.na(as.numeric(input$l3ntox))),"Grade 3 non-DLT NOT a Number") %then%
-        need(try(!is.na(as.numeric(input$l4ntox))),"Grade 4 non-DLT NOT a Number") %then%
-        need(try(!is.na(as.numeric(input$l3tox))),"Grade 3 DLT NOT a Number") %then%
-        need(try(!is.na(as.numeric(input$l4tox))),"Grade 4 DLT NOT a Number") %then%
-        need(try(!is.null(input$doselevel)),'Dose level is invalid') %then%
+        need(try(!is.null(input$l1tox)),"Grade 1 toxicity invalid") ,
+        need(try(!is.null(input$l2tox)),"Grade 2 toxicity invalid") ,
+        need(try(!is.null(input$l3ntox)),"Grade 3 non-DLT invalid") ,
+        need(try(!is.null(input$l4ntox)),"Grade 4 non-DLT invalid") ,
+        need(try(!is.null(input$l3tox)),"Grade 3 DLT invalid") ,
+        need(try(!is.null(input$l4tox)),"Grade 4 DLT invalid") ,
+        need(try(!is.na(as.numeric(input$l1tox))),"Grade 1 toxicity NOT a Number") ,
+        need(try(!is.na(as.numeric(input$l2tox))),"Grade 2 toxicity NOT a Number") ,
+        need(try(!is.na(as.numeric(input$l3ntox))),"Grade 3 non-DLT NOT a Number") ,
+        need(try(!is.na(as.numeric(input$l4ntox))),"Grade 4 non-DLT NOT a Number") ,
+        need(try(!is.na(as.numeric(input$l3tox))),"Grade 3 DLT NOT a Number") ,
+        need(try(!is.na(as.numeric(input$l4tox))),"Grade 4 DLT NOT a Number") ,
+        need(try(!is.null(input$doselevel)),'Dose level is invalid') ,
         need(try(!is.na(as.numeric(input$doselevel))),'Dose level is not a number')
       )
       #reactive function to return toxicity data
@@ -202,19 +271,19 @@ shinyServer(
     datatoxmand <- reactive({
       # Validate that all toxicity have been filled for error message
       validate(
-        need(try(!is.null(input$l1tox)),"Grade 1 toxicity invalid") %then%
-          need(try(!is.null(input$l2tox)),"Grade 2 toxicity invalid") %then%
-          need(try(!is.null(input$l3ntox)),"Grade 3 non-DLT invalid") %then%
-          need(try(!is.null(input$l4ntox)),"Grade 4 non-DLT invalid") %then%
-          need(try(!is.null(input$l3tox)),"Grade 3 DLT invalid") %then%
-          need(try(!is.null(input$l4tox)),"Grade 4 DLT invalid") %then%
-          need(try(!is.na(as.numeric(input$l1tox))),"Grade 1 toxicity NOT a Number") %then%
-          need(try(!is.na(as.numeric(input$l2tox))),"Grade 2 toxicity NOT a Number") %then%
-          need(try(!is.na(as.numeric(input$l3ntox))),"Grade 3 non-DLT NOT a Number") %then%
-          need(try(!is.na(as.numeric(input$l4ntox))),"Grade 4 non-DLT NOT a Number") %then%
-          need(try(!is.na(as.numeric(input$l3tox))),"Grade 3 DLT NOT a Number") %then%
-          need(try(!is.na(as.numeric(input$l4tox))),"Grade 4 DLT NOT a Number") %then%
-          need(try(!is.null(input$doselevel)),'Dose level is invalid') %then%
+        need(try(!is.null(input$l1tox)),"Grade 1 toxicity invalid") ,
+          need(try(!is.null(input$l2tox)),"Grade 2 toxicity invalid") ,
+          need(try(!is.null(input$l3ntox)),"Grade 3 non-DLT invalid") ,
+          need(try(!is.null(input$l4ntox)),"Grade 4 non-DLT invalid") ,
+          need(try(!is.null(input$l3tox)),"Grade 3 DLT invalid") ,
+          need(try(!is.null(input$l4tox)),"Grade 4 DLT invalid") ,
+          need(try(!is.na(as.numeric(input$l1tox))),"Grade 1 toxicity NOT a Number") ,
+          need(try(!is.na(as.numeric(input$l2tox))),"Grade 2 toxicity NOT a Number") ,
+          need(try(!is.na(as.numeric(input$l3ntox))),"Grade 3 non-DLT NOT a Number") ,
+          need(try(!is.na(as.numeric(input$l4ntox))),"Grade 4 non-DLT NOT a Number") ,
+          need(try(!is.na(as.numeric(input$l3tox))),"Grade 3 DLT NOT a Number") ,
+          need(try(!is.na(as.numeric(input$l4tox))),"Grade 4 DLT NOT a Number") ,
+          need(try(!is.null(input$doselevel)),'Dose level is invalid') ,
           need(try(!is.na(as.numeric(input$doselevel))),'Dose level is not a number')
       )
       return(TRUE)
@@ -245,7 +314,7 @@ shinyServer(
     alphavaluereactive <- reactive({
       # Debug clauses
       validate(
-        need(try(!is.null(input$alphavalue)),'Alpha value is invalid') %then%
+        need(try(!is.null(input$alphavalue)),'Alpha value is invalid') ,
         need(try(!is.na(as.numeric(input$alphavalue))),'Alpha value is not a number')
       )
       return(as.numeric(input$alphavalue))
@@ -255,7 +324,7 @@ shinyServer(
     betavaluereactive <- reactive({
       # Debug clauses
       validate(
-        need(try(!is.null(input$betavalue)),'Alpha value is invalid') %then%
+        need(try(!is.null(input$betavalue)),'Alpha value is invalid') ,
         need(try(!is.na(as.numeric(input$betavalue))),'Alpha value is not a number')
       )
       return(as.numeric(input$betavalue))
@@ -272,12 +341,12 @@ shinyServer(
     parareactive <- reactive({
       # Validate all conditions on page 1 for error messages
       validate(
-        need(try(!is.null(input$alphavalue)),'Alpha value is invalid') %then%
-        need(try(!is.na(as.numeric(input$alphavalue))),'Alpha value is not a number') %then%
-        need(try(!is.null(input$betavalue)),'Alpha value is invalid') %then%
-        need(try(!is.na(as.numeric(input$betavalue))),'Alpha value is not a number') %then%
-        need(try(!is.null(input$pDLTvalue)),'Expected percentage of DLT is invalid') %then%
-        need(try(!is.na(as.numeric(input$pDLTvalue))),'Expected percentage of DLT is not a number') %then%
+        need(try(!is.null(input$alphavalue)),'Alpha value is invalid') ,
+        need(try(!is.na(as.numeric(input$alphavalue))),'Alpha value is not a number') ,
+        need(try(!is.null(input$betavalue)),'Alpha value is invalid') ,
+        need(try(!is.na(as.numeric(input$betavalue))),'Alpha value is not a number') ,
+        need(try(!is.null(input$pDLTvalue)),'Expected percentage of DLT is invalid') ,
+        need(try(!is.na(as.numeric(input$pDLTvalue))),'Expected percentage of DLT is not a number') ,
         need(try(as.numeric(input$pDLTvalue) <= 100),'Expected percentage of DLT is bigger than 100%') 
       )
       return(TRUE)
@@ -293,8 +362,8 @@ shinyServer(
     # Calculate TNETS
     TNETSreactive <- reactive({
       validate(
-        need(try(!is.null(input$pDLTvalue)),'Expected percentage of DLT is invalid') %then%
-        need(try(!is.na(as.numeric(input$pDLTvalue))),'Expected percentage of DLT is not a number') %then%
+        need(try(!is.null(input$pDLTvalue)),'Expected percentage of DLT is invalid') ,
+        need(try(!is.na(as.numeric(input$pDLTvalue))),'Expected percentage of DLT is not a number') ,
         need(try(as.numeric(input$pDLTvalue) <= 100),'Expected percentage of DLT is bigger than 100%')
       )
       toxpercentage <- as.numeric(input$pDLTvalue)
@@ -367,16 +436,33 @@ shinyServer(
       return(tmptoxrow)
     })
     
-    # Output for toxicity score for each submisison    
-    output$toxicityscores <- DT::renderDataTable({
-      if (is.null(input$formsubmission) ){
-        return()
+    output$toxicityscores <- renderDataTable({
+      toxicityscoretables(buttontoggle())
+    })
+    
+    buttontoggle <- reactive({
+      tmp <- 0
+      importbuttontmp <- get('importbuttontracker',envir = .GlobalEnv)
+      deleteRowtmp <- get('deleteRowtracker',envir = .GlobalEnv)
+      nextBtntmp <- get('nextBtntracker',envir=.GlobalEnv)
+      if (importbuttontmp == 1 || deleteRowtmp == 1 || nextBtntmp == 1) {
+        tmp <- 1
       }
-      else{
-        input$formsubmission
-        if(input$formsubmission == 0)
-          return()
-        else
+      print('toggled')
+      return(tmp)
+    })
+    # Output for toxicity score for each submisison    
+    toxicityscoretables <- function(whatever)
+    #(
+      {
+      print('outputing')
+      
+      if (!is.null(input$formsubmission)){
+        print('in formsubmission')
+        print(paste0(input$formsubmission[[1]]))
+        # prevent throughing error when button is unintialized
+        if(input$formsubmission[[1]] != 0)
+        # Only return when formsubmussion button is clicked (!=0)
           isolate(
             if(is.null(datatox())){return()}
             else{
@@ -388,16 +474,100 @@ shinyServer(
               else{
                 rownames(tmptoxrow) <- paste0('Patient ',(nrow(get('globaltox',envir = .GlobalEnv))+1))
               }
-              # assign global variable hence <<-
+              # assign global variable
               assign('globaltox',rbind(get('globaltox',globalenv()),tmptoxrow),globalenv())
               #globaltox <<- rbind(globaltox,tmptoxrow)
+              print('formsubmission return globaltox')
               return(get('globaltox',envir = .GlobalEnv))
             }
-          )
+          )    
+        print('not in formsubmission')
       }
-    },
-    options = list(searching = TRUE, lengthChange = TRUE,orderClasses = TRUE,scrollX = TRUE,className = 'dt-center')
-    )
+      else{
+        print('formsubmission is null')
+      }
+      
+      if(!is.null(input$importbutton)){
+        print('in import')
+        print(paste0(input$importbutton[[1]]))
+        # prevent throughing error when button is unintialized
+        if(input$importbutton[[1]] != 0)
+          # Only return when importbutton button is clicked (!=0)
+          if(get('importbuttontracker',envir = .GlobalEnv) == 1){
+            assign("importbuttontracker", 0, envir = .GlobalEnv)
+            print(paste0('importbuttontracker assigned 0'))
+            if(nrow(get('globaltox',envir = .GlobalEnv)) == 0){
+              return()
+              # return nothing when globaltox has 0 row of data
+            }
+            isolate({
+              #return(rowvalues$globaltoxworking)
+              print('importbutton return globaltox')
+              return(get('globaltox',envir = .GlobalEnv))
+            })  
+          }    
+      }
+      else{
+        print('importbutton is null')
+      }
+      
+      if(!is.null(input$deleteRow)){
+        print('in delete')
+        print(paste0(input$deleteRow[[1]]))
+        #print(paste0('delete in output: ',input$deleteRow[[1]]))
+        #print(get('globaltox',envir = .GlobalEnv))
+        # prevent throughing error when button is unintialized
+        if(input$deleteRow[[1]] != 0){
+          # Only return when delete button is clicked (!=0)
+          if(get('deleteRowtracker',envir = .GlobalEnv) == 1){
+            assign("deleteRowtracker", 0, envir = .GlobalEnv)
+            print(paste0('deleteRowtracker assigned 0'))
+            if(nrow(get('globaltox',envir = .GlobalEnv)) == 0){
+              print('delete return null')
+              return()
+              # return nothing when globaltox has 0 row of data
+            }
+            isolate({
+              print('delete return global tox')
+              return(get('globaltox',envir = .GlobalEnv))
+            })  
+          } 
+        }
+      }
+      else{
+        print('delete is null')
+      }
+      
+      if(!is.null(input$nextBtn)){
+        print('in next')
+        print(input$nextBtn[[1]])
+        # prevent throughing error when button is unintialized
+        if(input$nextBtn[[1]] != 0){
+          if(get('nextBtntracker',envir = .GlobalEnv) == 1){
+            assign("nextBtntracker", 0, envir = .GlobalEnv)
+            print(paste0('nextBtntracker assigned 0'))
+            if(nrow(get('globaltox',envir = .GlobalEnv)) == 0){
+              print('next return null')
+              return()
+              # return nothing when globaltox has 0 row of data
+            }
+            isolate({
+              print('next return globaltox')
+              return(get('globaltox',envir = .GlobalEnv))
+            })  
+          } 
+        }
+      }
+      else{
+        print('next is null')
+      }
+      
+
+    }
+    #,options = list(searching = TRUE, lengthChange = TRUE,orderClasses = TRUE,scrollX = TRUE,className = 'dt-center'
+    #               ,selection = list(selected = input$deleteRow)
+    #               )
+    #)
     
     # Downloading files of all patients
     output$downFile <- downloadHandler(
@@ -405,9 +575,8 @@ shinyServer(
         paste("Patient toxicities information","csv",sep = ".")
       },
       content = function(file){
-        temp <- output$toxicityscores
-        write.csv(temp,file,row.names = FALSE)
-        write.table(otherstats(), file, append = TRUE,sep = ',')
+        temp <- get('globaltox',envir = .GlobalEnv)
+        write.csv(temp,file,row.names = TRUE)
       }
     )
   }
