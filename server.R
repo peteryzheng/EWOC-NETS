@@ -5,6 +5,100 @@ library(shinyjs)
 library(dplyr)
 library(digest)
 
+##### WHICH BASE LOG DO WE USE ??????? #######
+logit <- function(num){
+  return(log(num/(1-num)))
+}
+
+posteriorcalc <- function(pregamma, prerho, simulationtime, confidentsimulation, toxinfo, tnets){
+  simrho <- rep(NA,simulationtime) # array for simulation results for rho
+  simgamma <- rep(NA,simulationtime) # array for simulation results for gamma
+  simrho[1] <- prerho
+  simgamma[1] <- pregamma
+  
+  for(i in 2:simulationtime){
+    simrho[i] <- updaterho(pregamma,simrho[i-1],toxinfo,tnets)
+  }
+  for(i in 2:simulationtime){
+    simgamma[i] <- updategamma(simgamma[i-1],mean(simrho[(simulationtime-confidentsimulation):simulationtime]),
+                               toxinfo,tnets)
+  }
+  return(list(simrho,simgamma))
+}
+
+likelihood <- function(gamma,rho,toxinfo,tnets){
+  beta0<-(logit(rho)*gamma-logit(tnets)*0)/(gamma-0)    #beta1 in logistic function
+  #print(beta0)
+  beta1<-(logit(tnets)-logit(rho))/(gamma-0)  #beta1 in logistic function
+  #print(beta1)
+  si <- toxinfo$NETS
+  #print(si)
+  
+  #print(toxinfo$`Dose Level`)
+  tmpeq <-exp(beta0+beta1*(toxinfo$`Dose Level`))/(1+exp(beta0+beta1*(toxinfo$`Dose Level`)))
+  #print(tmpeq)
+  
+  
+  likelihood<-prod((tmpeq^si)*(1-tmpeq)^(1-si))   #quasi likelihood of all recent patients
+
+  return(likelihood)
+}
+
+updaterho <- function(gamma,prevrho,toxinfo,tnets){
+  tmprho <- runif(1,0,tnets) # Random Number from 0 to 1
+  oldlikelihood <- likelihood(gamma,prevrho,toxinfo,tnets)
+  #print('Oldlikelihood')
+  #print(oldlikelihood)
+  newlikelihood <- likelihood(gamma,tmprho,toxinfo,tnets)
+  #print('New likelihood')
+  #print(newlikelihood)
+  
+  ratiotmprho <- newlikelihood/oldlikelihood
+  #print(paste0('ratio: ',ratiotmprho))
+  
+
+  
+  if(ratiotmprho < 1){
+    tmptmprho<-runif(1,0,1)
+    # randomly save tmprho or new number if the current iteration is less likely due to likelihood function
+    if(tmptmprho<ratiotmprho){
+      rho_next<-tmprho
+    }
+    else{
+      rho_next<-prevrho
+    }
+  }
+  else{
+    rho_next <- tmprho
+  }
+  return(rho_next)
+}
+
+updategamma <- function(prevgamma,rho,toxinfo,tnets){
+  tmpgamma <- runif(1,0,100) # Random Number from 0 to 1
+  oldlikelihood <- likelihood(prevgamma,rho,toxinfo,tnets)
+  newlikelihood <- likelihood(tmpgamma,rho,toxinfo,tnets)
+  ratiotmpgamma <- newlikelihood/oldlikelihood
+  if(ratiotmpgamma == 'NaN'){
+    ratiotmpgamma <- 1
+  }
+  
+  if(ratiotmpgamma < 1){
+    tmptmpgamma<-runif(1,0,1)
+    # randomly save tmpgamma or new number if the current iteration is less likely due to likelihood function
+    if(tmptmpgamma<ratiotmpgamma){
+      gamma_next<-tmpgamma
+    }
+    else{
+      gamma_next<-prevgamma
+    }
+  }
+  else{
+    gamma_next <- tmpgamma
+  }
+  return(gamma_next)
+}
+
 onSessionEnded = function(callback) {
   "Registers the given callback to be invoked when the session is closed
   (i.e. the connection to the client has been severed). The return value
@@ -58,12 +152,46 @@ shinyServer(
       }
     }
     
-    # Only update every time formsubmission / delete is clicked 
-    observeEvent(input$formsubmission,updatedt())
+    # Only refresh every time next/prev/ delete is clicked 
+    observeEvent(c(input$nextBtn,input$prevBtn,input$deleteRow),{    
+      updatedt()
+      output$toxicityscores <- renderDataTable({
+        get('globaltox',envir = .GlobalEnv)
+      })
+    })
+    # For deleting rows
+    rowvalues <- reactiveValues(globaltoxworking = get('globaltox',envir = .GlobalEnv))
+    observeEvent(input$deleteRow,deletingrow(input$toxicityscores_rows_selected))
+    deletingrow <- function(rowselected){
+      print(input$deleteRow[[1]])
+      if (!is.null(rowselected)) {
+        #print(input$toxicityscores_rows_selected)
+        tmpdt <- get('globaltox',envir = .GlobalEnv)
+        tmpdt <- tmpdt[-as.numeric(rowselected),]
+        assign('globaltox',tmpdt,globalenv())
+        print(paste0('Delete function used: ',nrow(get('globaltox',envir = .GlobalEnv))))
+      }
+    }
     
-    # Update globaltox when import button is clicked for input files
-    observeEvent(input$importbutton,updateimport())
+    # Only refresh every time submit button is clicked
+    observeEvent(input$formsubmission,{    
+      updatedt()
+      tmptoxrow <- toxrow()
+      colnames(tmptoxrow) <- colnames(globaltox)
+      # assign global variable
+      assign('globaltox',rbind(get('globaltox',globalenv()),tmptoxrow),globalenv())
+      output$toxicityscores <- renderDataTable({
+        get('globaltox',envir = .GlobalEnv)
+      })
+    })
     
+    # refresh globaltox when import button is clicked for input files
+    observeEvent(input$importbutton,{
+      updateimport()
+      output$toxicityscores <- renderDataTable({
+        get('globaltox',envir = .GlobalEnv)
+      })
+    })
     updateimport <- function(){
       incomingFile <- input$csvimport
       if(is.null(input$csvimport)){
@@ -76,44 +204,77 @@ shinyServer(
         if(ncol(incomingdt) == ncol(tmpglobaltox) &&
            all(colnames(incomingdt)== colnames(tmpglobaltox))){
           assign('globaltox',incomingdt,globalenv())
-          #print(get('globaltox',envir = .GlobalEnv))
+          #print(paste0('Imported ',get('globaltox',envir = .GlobalEnv)))
         }
       }
     }
     
-    # For deleting rows
-    rowvalues <- reactiveValues(globaltoxworking = get('globaltox',envir = .GlobalEnv))
-    
-    observeEvent(input$deleteRow,deletingrow(input$toxicityscores_rows_selected))
-    
-    deletingrow <- function(rowselected){
-      print(input$deleteRow[[1]])
-      if (!is.null(rowselected)) {
-        #print(input$toxicityscores_rows_selected)
-        tmpdt <- get('globaltox',envir = .GlobalEnv)
-        tmpdt <- tmpdt[-as.numeric(rowselected),]
-        assign('globaltox',tmpdt,globalenv())
-        print(paste0('Delete function used: ',nrow(get('globaltox',envir = .GlobalEnv))))
-      }
-    }
-    
-    # Keeping track of all button clicking 
-    observeEvent(input$importbutton, incrementButtonCounter('importbutton'))
-    observeEvent(input$nextBtn, incrementButtonCounter('nextBtn'))
-    observeEvent(input$deleteRow, incrementButtonCounter('deleteRow'))
-    
-    incrementButtonCounter <- function(buttonname){
-      buttontrackername <- paste0(buttonname,'tracker') 
-      tmp <- get(buttontrackername,envir = .GlobalEnv)
-      assign(buttontrackername, 1, envir = .GlobalEnv)
-      print(paste0(buttontrackername,' assigned 1'))
+    nextdosecalc <- reactive({
+      simulationtime <- 30000
+      confidentsimulation <- 5000
+      valTNETS <- TNETSreactive()
+      # Preset values for gamma and rho to be updated by MCMC
+      pregamma <- 50
+      prerho <- 0.05
+      toxinfo <- get('globaltox',envir = .GlobalEnv)[,c(2,11)]
+      print(toxinfo)
+      # posteriorcalc function updata posterior distribution of gamma and rho
+      posteriors <- posteriorcalc(pregamma, prerho, simulationtime, confidentsimulation, toxinfo, valTNETS)
+      rhoresults <- posteriors[[1]][(simulationtime-confidentsimulation):simulationtime]
+      gammaresults <- posteriors[[2]][(simulationtime-confidentsimulation):simulationtime]
+      return(list(rhoresults,gammaresults))
+    })
+    # refresh plots and outputs when calculate button is clicked
+    observeEvent(input$calculating,{
+      results <- nextdosecalc()
+      output$tableoutputs <- renderDataTable({
+        quantilevector <- rep(0.05,20)
+        for (i in 1:length(quantilevector)){
+          quantilevector[i] <- quantilevector[i] + 0.05*(i-1)
+        }
+        print(quantilevector)
+        rhodf <- data.frame(
+          round(
+            quantile(results[[1]],quantilevector),digits = 4
+          )
+        )
+        print(rhodf)
+        gammadf <- data.frame(
+          round(
+            quantile(results[[2]],quantilevector),digits = 4
+          )
+        )
+        returndf <- cbind(rhodf,gammadf)
+        colnames(returndf) <- c('rho0','gamma')
+        rownames(returndf) <- quantilevector
+        return(returndf)
+      })
+      output$rhooutputs <- renderPlot({
+        print('done')
+        quantilevector <- rep(0.05,20)
+        for (i in 1:length(quantilevector)){
+          quantilevector[i] <- quantilevector[i] + 0.05*(i-1)
+        }
+        barplot(quantile(results[[1]],quantilevector))
+      })
+      output$gammaoutputs <- renderPlot({
+        print('done')
+        quantilevector <- rep(0.05,20)
+        for (i in 1:length(quantilevector)){
+          quantilevector[i] <- quantilevector[i] + 0.05*(i-1)
+        }
+        print(quantilevector)
+        barplot(quantile(results[[2]],quantilevector))
+      })
       
-    }
+    })
     
     # Mandatory toxicity fileds
     mandatoryfieldstox <- c('doselevel','l1tox','l2tox','l3ntox','l4ntox','l3tox','l4tox')
     # Mandatory parameter fields
     mandatoryfieldsparameter <- c('alphavalue','betavalue','pDLTvalue')
+    # Mandatory EWOC fields
+    mandatoryfieldsewoc <- c('prerho0','pregamma','xmin','xmax')
     
     observe({
       # js for page buttons
@@ -142,13 +303,30 @@ shinyServer(
         },
         logical(1)
       )
+      # js script for mandatory ewoc fields   
+      mandatoryewoc <- vapply(
+        mandatoryfieldsewoc,
+        function(x){
+          # Make sure every value is not NULL or non-numeric
+          !is.null(input[[x]]) && !is.na(as.numeric(input[[x]]))
+        },
+        logical(1)
+      )
       # Boolean value indicating if mandatory fields are filled
       filledpara <- all(mandatoryparameters)
+      filledewoc <- all(mandatoryewoc)
       shinyjs::toggleState('nextBtn',
                            condition = # Make sure all parameters are valid before allowing input on second page
-                             filledpara &&
-                             as.numeric(input$pDLTvalue) <= 100 &&
-                             rv$page < 2
+                             (filledpara && 
+                                # parameters are conforming to certain conditions
+                                as.numeric(input$pDLTvalue) <= 100 &&
+                                rv$page < 2)||
+                             (filledewoc &&
+                                # ewoc parameters are conforming to certain conditions
+                                as.numeric(input$xmax)>=0 && as.numeric(input$xmin)>=0 &&   
+                                as.numeric(input$prerho0)<1 && as.numeric(input$prerho0)>=0 &&                              as.numeric(input$pregamma)<as.numeric(input$xmax) &&
+                                as.numeric(input$pregamma)>as.numeric(input$xmin) &&                        
+                                rv$page < 3)
       )
       # js for calculate button
       shinyjs::toggleState('calculating',
@@ -194,7 +372,52 @@ shinyServer(
         br(),
         # Input for all toxicity incidences
         tags$div(class = "widgets",
-                 textInput('ptID','Please enter Patient ID(optional):',''),
+                 textInput('prerho0','Please enter priori rho0:','0.05'),
+                 textInput('pregamma','Please enter priori gamma:','50'),
+                 textInput('xmin','Please enter minimum dose level:','0'),
+                 textInput('xmax','Please enter maximum dose level:','100'),
+                 textOutput("priorerr")
+        )
+      )
+    })
+    
+    dataprior <- reactive({
+      # Validate that all toxicity have been filled for error message
+      validate(
+        need(try(!is.null(input$prerho0)),"Priori rho0 invalid") ,
+        need(try(!is.null(input$pregamma)),"Priori gamma invalid") ,
+        need(try(!is.null(input$xmin)),"Minimum dose level invalid") ,
+        need(try(!is.null(input$xmax)),"Maximum dose level invalid") ,
+        need(try(!is.na(as.numeric(input$prerho0))),"Priori rho0 NOT a Number") ,
+        need(try(!is.na(as.numeric(input$pregamma))),"Priori gamma NOT a Number") ,
+        need(try(!is.na(as.numeric(input$xmin))),"Minimum dose level NOT a Number"),
+        need(try(!is.na(as.numeric(input$xmax))),"Maximum dose level NOT a Number"),
+        need(try(!is.na(as.numeric(input$xmax))),"Maximum dose level NOT a Number"), 
+        need(try(as.numeric(input$xmax)>=0 && as.numeric(input$xmin)>=0 ),"Dose level must be POSITIVE"), 
+        need(try(as.numeric(input$prerho0)<1 && as.numeric(input$prerho0)>=0 ),"Rho0 must be between [0,1)"),
+        need(try(as.numeric(input$pregamma)<as.numeric(input$xmax) &&
+                   as.numeric(input$pregamma)>as.numeric(input$xmin)),"Gamma must be between minimum and maximum dose level")
+        
+        
+      )
+      return(TRUE)
+    })
+    
+    # Toxicity error messages
+    output$priorerr <- renderText(
+      if(!dataprior()){
+        head(dataprior())
+      }
+    )
+    
+    output$page3 <- renderUI({
+      tagList(
+        h2("Step 3"),
+        h3("Please list all instances for each toxicity level"),
+        br(),
+        # Input for all toxicity incidences
+        tags$div(class = "widgets",
+                 textInput('ptID','Please enter Patient ID(optional):','NA'),
                  textInput('doselevel','Please enter dose level:','0'),
                  textInput("l1tox",
                            "Please enter the total number of instances for grade 1 toxicity:",
@@ -224,7 +447,7 @@ shinyServer(
         )
       )
     })
-    
+        
     doselevelreactive <- reactive({
       # Debug dose level
       validate(
@@ -233,7 +456,6 @@ shinyServer(
       )
       return(as.numeric(input$doselevel))
     })
-    
     
     datatox <- reactive({
       # Validate that all toxicity have been filled out before proceeding
@@ -417,7 +639,12 @@ shinyServer(
         return(maxtox()-1 + natexp/(1+natexp))
       }
     })
+    
+    # Reactive methods for calculating via MCMC
+    # Predefined min and max dose on a scale of 0 to 100
+    
 
+    
     # Reactive methods for new table
     toxrow <- reactive({
       # get toxicity data for each patient
@@ -436,134 +663,7 @@ shinyServer(
       return(tmptoxrow)
     })
     
-    output$toxicityscores <- renderDataTable({
-      toxicityscoretables(buttontoggle())
-    })
-    
-    buttontoggle <- reactive({
-      tmp <- 0
-      importbuttontmp <- get('importbuttontracker',envir = .GlobalEnv)
-      deleteRowtmp <- get('deleteRowtracker',envir = .GlobalEnv)
-      nextBtntmp <- get('nextBtntracker',envir=.GlobalEnv)
-      if (importbuttontmp == 1 || deleteRowtmp == 1 || nextBtntmp == 1) {
-        tmp <- 1
-      }
-      print('toggled')
-      return(tmp)
-    })
-    # Output for toxicity score for each submisison    
-    toxicityscoretables <- function(whatever)
-    #(
-      {
-      print('outputing')
-      
-      if (!is.null(input$formsubmission)){
-        print('in formsubmission')
-        print(paste0(input$formsubmission[[1]]))
-        # prevent throughing error when button is unintialized
-        if(input$formsubmission[[1]] != 0)
-        # Only return when formsubmussion button is clicked (!=0)
-          isolate(
-            if(is.null(datatox())){return()}
-            else{
-              tmptoxrow <- toxrow()
-              colnames(tmptoxrow) <- colnames(globaltox)
-              if(is.null(nrow(get('globaltox',envir = .GlobalEnv)))){
-                rownames(tmptoxrow) <- paste0('Patient ',1)
-              }
-              else{
-                rownames(tmptoxrow) <- paste0('Patient ',(nrow(get('globaltox',envir = .GlobalEnv))+1))
-              }
-              # assign global variable
-              assign('globaltox',rbind(get('globaltox',globalenv()),tmptoxrow),globalenv())
-              #globaltox <<- rbind(globaltox,tmptoxrow)
-              print('formsubmission return globaltox')
-              return(get('globaltox',envir = .GlobalEnv))
-            }
-          )    
-        print('not in formsubmission')
-      }
-      else{
-        print('formsubmission is null')
-      }
-      
-      if(!is.null(input$importbutton)){
-        print('in import')
-        print(paste0(input$importbutton[[1]]))
-        # prevent throughing error when button is unintialized
-        if(input$importbutton[[1]] != 0)
-          # Only return when importbutton button is clicked (!=0)
-          if(get('importbuttontracker',envir = .GlobalEnv) == 1){
-            assign("importbuttontracker", 0, envir = .GlobalEnv)
-            print(paste0('importbuttontracker assigned 0'))
-            if(nrow(get('globaltox',envir = .GlobalEnv)) == 0){
-              return()
-              # return nothing when globaltox has 0 row of data
-            }
-            isolate({
-              #return(rowvalues$globaltoxworking)
-              print('importbutton return globaltox')
-              return(get('globaltox',envir = .GlobalEnv))
-            })  
-          }    
-      }
-      else{
-        print('importbutton is null')
-      }
-      
-      if(!is.null(input$deleteRow)){
-        print('in delete')
-        print(paste0(input$deleteRow[[1]]))
-        #print(paste0('delete in output: ',input$deleteRow[[1]]))
-        #print(get('globaltox',envir = .GlobalEnv))
-        # prevent throughing error when button is unintialized
-        if(input$deleteRow[[1]] != 0){
-          # Only return when delete button is clicked (!=0)
-          if(get('deleteRowtracker',envir = .GlobalEnv) == 1){
-            assign("deleteRowtracker", 0, envir = .GlobalEnv)
-            print(paste0('deleteRowtracker assigned 0'))
-            if(nrow(get('globaltox',envir = .GlobalEnv)) == 0){
-              print('delete return null')
-              return()
-              # return nothing when globaltox has 0 row of data
-            }
-            isolate({
-              print('delete return global tox')
-              return(get('globaltox',envir = .GlobalEnv))
-            })  
-          } 
-        }
-      }
-      else{
-        print('delete is null')
-      }
-      
-      if(!is.null(input$nextBtn)){
-        print('in next')
-        print(input$nextBtn[[1]])
-        # prevent throughing error when button is unintialized
-        if(input$nextBtn[[1]] != 0){
-          if(get('nextBtntracker',envir = .GlobalEnv) == 1){
-            assign("nextBtntracker", 0, envir = .GlobalEnv)
-            print(paste0('nextBtntracker assigned 0'))
-            if(nrow(get('globaltox',envir = .GlobalEnv)) == 0){
-              print('next return null')
-              return()
-              # return nothing when globaltox has 0 row of data
-            }
-            isolate({
-              print('next return globaltox')
-              return(get('globaltox',envir = .GlobalEnv))
-            })  
-          } 
-        }
-      }
-      else{
-        print('next is null')
-      }
-      
 
-    }
     #,options = list(searching = TRUE, lengthChange = TRUE,orderClasses = TRUE,scrollX = TRUE,className = 'dt-center'
     #               ,selection = list(selected = input$deleteRow)
     #               )
